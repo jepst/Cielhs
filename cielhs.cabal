@@ -1,0 +1,18 @@
+Name:                cielhs
+Version:             0.1
+Cabal-Version:       >=1.2
+Description:         Haskell executor for CIEL
+synopsis:            Haskell executor for CIEL
+License:             BSD3
+License-file:        LICENSE
+Extra-Source-Files:  README
+Author:              Jeff Epstein <jee36@cam.ac.uk>
+Maintainer:          Jeff Epstein <jee36@cam.ac.uk>
+Build-Type:          Simple
+tested-with:         GHC ==6.12.1
+
+library
+  Build-Depends:       base >= 4, filepath, bytestring, template-haskell, stm, utf8-string, directory, Workflow, RefSerialize, json, TCache == 0.6.5, unix, containers, mtl, zip-archive, ghc-binary, random
+  ghc-options:         -Wall
+  Extensions:          TemplateHaskell
+  Exposed-Modules:     Ciel

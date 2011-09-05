@@ -1,0 +1,10 @@
+{
+ "start": 
+ 	  { "handler": "ocaml",
+ 	    "args": {
+	    	    "binary" : "/home/eppie/Desktop/cielhs/Test",
+		    "args" : [10000,2000],
+		    "n_outputs" : 1}
+	  },
+ "result": [ {"__decode_ref__":"json"} ]
+}
