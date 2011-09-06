@@ -338,7 +338,7 @@ cmdSpawn istail isfixed deps args fnref wfname =
         task arg0 ref = makeObj $ [("n_outputs",JSRational False 1),
                         ("args",JSArray args),
                         ("binary",JSString $ toJSString arg0),
-                        ("executor_name",JSString $ toJSString "ocaml"),
+                        ("executor_name",JSString $ toJSString "haskell"),
                         ("extra_dependencies",JSArray deps)]++
                         ref ++ fixed
 
