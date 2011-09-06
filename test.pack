@@ -1,6 +1,6 @@
 {
  "start": 
- 	  { "handler": "ocaml",
+ 	  { "handler": "haskell",
  	    "args": {
 	    	    "binary" : "/home/eppie/Desktop/cielhs/Test",
 		    "args" : [10000,2000],

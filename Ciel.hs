@@ -3,7 +3,7 @@ module Ciel (CielWF, Ref,
 
              cielInit,
 
-             spawn, readRef, resolve,
+             spawn, readRef, readRefBlock, resolve, resolveBlock,
              
              doWF, doIO, doCiel,
 
@@ -185,6 +185,9 @@ openRef ref sweetheart =
                      JSObject $ toJSObject [("ref",showJSON ref),
                        ("make_sweetheart",JSBool sweetheart)]]
 
+readRefBlock :: (JSON a,Typeable a) => Ref a -> Ciel a
+readRefBlock ref = resolveBlock [ref] >> readRef ref
+
 readRef :: (JSON a,Typeable a) => Ref a -> Ciel a
 readRef ref =
   do fp <- openRef ref False
@@ -285,10 +288,20 @@ getRandomWFName =
 spawn :: (Typeable a,IResource a,JSON a) => Closure (CielWF a) -> Ciel (Ref a)
 spawn fn =
    do ts <- getCielState
-      res <- cmdSpawn False [] [JSString $ toJSString "___",
+      res <- cmdSpawn False False [] [JSString $ toJSString "___",
                  showJSON fn,
                  JSString $ toJSString $ fromJust $ csWFName ts] Nothing (fromJust $ csWFName ts)
       return $ refFromJS res
+
+resolveBlock :: [Ref a] -> Ciel ()
+resolveBlock refs = 
+    do ts <- getCielState
+       cmdSpawn True True (map showJSON refs) [] Nothing (fromJust $ csWFName ts)
+       cmdExit True
+       msg <- trace "ASS" $ getMessage
+       trace "ASS2" (return())
+       case requirePayload msg "start_task" of
+             _ -> return ()
 
 resolve :: [Ref a] -> Ciel ()
 resolve refs = tailSpawn $ map showJSON refs
@@ -297,14 +310,14 @@ tailSpawn :: [JSValue] -> Ciel ()
 tailSpawn deps =
   do state <- liftIO archiveState
      ts <- getCielState
-     cmdSpawn True deps 
+     cmdSpawn True False deps 
            [JSString $ toJSString "___",csClosure ts,
              JSString $ toJSString $ fromJust $ csWFName ts] 
            (Just state) (fromJust $ csWFName ts)
      return ()
 
-cmdSpawn :: Bool -> [JSValue] -> [JSValue] -> Maybe BL.ByteString -> String -> Ciel JSValue
-cmdSpawn istail deps args fnref wfname =
+cmdSpawn :: Bool -> Bool -> [JSValue] -> [JSValue] -> Maybe BL.ByteString -> String -> Ciel JSValue
+cmdSpawn istail isfixed deps args fnref wfname =
   do ref <- case fnref of
               Nothing -> return []
               Just st -> liftM (\x -> [("fn_ref",showJSON x)]) $ outputNewValue st
@@ -320,13 +333,14 @@ cmdSpawn istail deps args fnref wfname =
   where cmdname = case istail of
                      True -> "tail_spawn"
                      False -> "spawn"
+        fixed = [("is_fixed",JSBool isfixed)]
         val arg0 ref = JSArray [JSString $ toJSString cmdname,task arg0 ref]
         task arg0 ref = makeObj $ [("n_outputs",JSRational False 1),
                         ("args",JSArray args),
                         ("binary",JSString $ toJSString arg0),
                         ("executor_name",JSString $ toJSString "ocaml"),
                         ("extra_dependencies",JSArray deps)]++
-                        ref
+                        ref ++ fixed
 
 cmdAllocateOutput :: Ciel Int
 cmdAllocateOutput =

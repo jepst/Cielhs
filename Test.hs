@@ -7,8 +7,11 @@ import Text.JSON (JSValue)
 import TestAux
 
 
-cielTest2 :: CielWF String
-cielTest2 = 
+-- Uses Workflow-based continuations. Calling resolve is optional,
+-- as readRef will force evaluation of futures, but resolve is
+-- more efficient because it forces multiple futures
+cielTest3 :: CielWF String
+cielTest3 = 
    do doIO $ putStrLn "Starting test"
       r1 <- mapM (\x -> doCiel $ spawn (add5__closure x)) [1..50]
       doCiel $ resolve r1
@@ -17,6 +20,23 @@ cielTest2 =
       doCiel $ resolve r2
       v2 <- mapM (doCiel . readRef) r2
       rs <- doCiel $ spawn (sumup__closure v2)
+      doCiel $ resolve [rs]
+      vs <- doCiel $ readRef rs
+      return $ "Final result is: " ++ show vs
+
+-- "Fixed" version blocks until references are resolved.
+-- Alternatively, use readRefBlock for same effect
+cielTest2 :: CielWF String
+cielTest2 = 
+   do doIO $ putStrLn "Starting test"
+      r1 <- mapM (\x -> doCiel $ spawn (add5__closure x)) [1..50]
+      doCiel $ resolveBlock r1
+      v1 <- mapM (doCiel . readRef) r1
+      r2 <- mapM (\x -> doCiel $ spawn (add1__closure x)) v1
+      doCiel $ resolveBlock r2
+      v2 <- mapM (doCiel . readRef) r2
+      rs <- doCiel $ spawn (sumup__closure v2)
+      doCiel $ resolveBlock [rs]
       vs <- doCiel $ readRef rs
       return $ "Final result is: " ++ show vs
 
@@ -34,7 +54,7 @@ cielChild :: CielWF Int
 cielChild = do doIO $ putStrLn "yoyoyoyo"
                return (9::Int)
 
-$(remotable ['cielTest1, 'cielChild,'cielTest2])
+$(remotable ['cielTest1, 'cielChild,'cielTest2, 'cielTest3])
 
 main = 
     do registerType :: IO [Int]
