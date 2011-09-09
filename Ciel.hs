@@ -462,7 +462,9 @@ cielInit rcmd userFun =
        _ -> error "Ciel wrapper can't parse arguments"
    where
     inTemp body = withTempDirectory "." "cielhs-tmp-" $
-                       (\fp -> setCurrentDirectory fp >> body)
+                       (\fp -> do ocwd <- getCurrentDirectory
+                                  setCurrentDirectory fp
+                                  body `finally` setCurrentDirectory ocwd)
     table = registerCalls rcmd
     diInit =
        do registerType :: IO () -- TODO register other types
