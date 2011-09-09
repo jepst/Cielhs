@@ -3,21 +3,21 @@ module Ciel (CielWF, Ref,
 
              cielInit,
 
-             spawn, readRef, readRefBlock, resolve, resolveBlock,
+             spawn, readRef, readRefBlocking, resolveBlocking,
              
              doWF, doIO, doCiel,
 
              registerType,
 
              remotable, mkClosure, mkClosureRec) where
-
+-- args, autolifting, resolve
 import Control.Exception (Exception,throw,catch,bracket,NonTermination(..),finally,SomeException)
 import Prelude hiding (catch)
 import Control.Monad (when,liftM)
 import Control.Monad.Trans (liftIO,MonadIO)
 import Data.Typeable (Typeable,typeOf)
-import Control.Workflow (registerType,Workflow,step,startWF,plift,defPath)
-import Data.TCache.IResource (IResource)
+import Control.Workflow (registerType,Workflow,step,startWF,plift,defPath,getWFHistory,unsafeIOtoWF)
+import Data.TCache.IResource (IResource(..))
 import Data.RefSerialize (Serialize(..))
 import System.Random
 import Data.RefSerialize.Parser (choice,symbol)
@@ -37,10 +37,11 @@ import System.Directory
 import System.Environment (getArgs,getProgName)
 import System.IO (hIsOpen,withBinaryFile,IOMode(..),hGetContents,Handle,hPutStrLn,BufferMode(..),hFlush,hSetBuffering,openBinaryFile,hClose)
 import Ciel.Call
+import Ciel.Types
 
 import System.Posix.IO (handleToFd,fdRead)
-
 import Control.Concurrent (forkIO,threadDelay,ThreadId,threadWaitRead)
+
 import Debug.Trace
 
 data ReferenceUnavailableException = ReferenceUnavailableException JSValue deriving (Typeable,Show)
@@ -48,6 +49,17 @@ instance Exception ReferenceUnavailableException
 
 data DummyException = DummyException deriving (Typeable,Show)
 instance Exception DummyException
+
+step1 :: (Monad m, MonadIO m, IResource a, Typeable a) => m a -> Workflow m a
+step1 = step
+{-step1 proc= do
+    r <- step proc 
+    trace ("@@@" ++ show (typeOf r)) (return())
+    unsafeIOtoWF $ do
+        (cache,_) <- readIORef refcache
+        H.delete cache $ keyResource Stat{wfName=  "CielHaskell#()"}
+        getWFHistory "CielHaskell" ()
+    return r-}
 
 getCielState :: Ciel CielState
 getCielState = Ciel $ \x -> return (x,x)
@@ -162,10 +174,10 @@ doWF :: WF a -> CielWF a
 doWF body = CielWF $  body
 
 doIO :: (JSON a,IResource a, Typeable a) => IO a -> CielWF a
-doIO body = doWF $ step $ liftIO body
+doIO body = doWF $ step1 $ liftIO body
 
 doCiel :: (JSON a, IResource a,Typeable a) => Ciel a -> CielWF a
-doCiel body = doWF $ step $ body
+doCiel body = doWF $ step1 $ body
 
 unWF (CielWF a) = a
 
@@ -185,11 +197,17 @@ openRef ref sweetheart =
                      JSObject $ toJSObject [("ref",showJSON ref),
                        ("make_sweetheart",JSBool sweetheart)]]
 
-readRefBlock :: (JSON a,Typeable a) => Ref a -> Ciel a
-readRefBlock ref = resolveBlock [ref] >> readRef ref
+readRefBlocking :: (JSON a,IResource a,Typeable a) => Ref a -> CielWF a
+readRefBlocking = doCiel . readRefBlocking'
 
-readRef :: (JSON a,Typeable a) => Ref a -> Ciel a
-readRef ref =
+readRefBlocking' :: (JSON a,Typeable a) => Ref a -> Ciel a
+readRefBlocking' ref = resolveBlocking' [ref] >> readRef' ref
+
+readRef :: (JSON a,Typeable a, IResource a) => Ref a -> CielWF a
+readRef = doCiel . readRef'
+
+readRef' :: (JSON a,Typeable a) => Ref a -> Ciel a
+readRef' ref =
   do fp <- openRef ref False
      res <- liftM decode $ liftIO $ readFile fp
      case res of
@@ -204,14 +222,13 @@ putMessage :: JSValue -> Ciel ()
 putMessage inp =
   do cs <- getCielState
      val `seq` liftIO $ BL.hPut (csOut cs) val
-     liftIO $ BL.putStrLn val
+--     liftIO $ BL.putStrLn val
      liftIO $ hFlush (csOut cs)
   where
         encoding = showJSValue inp []
         val = runPut (putWord32be (fromIntegral $! length encoding) >> 
                       putLazyByteString (BL8.pack encoding))
 
-say a = liftIO (putStrLn ("CielHaskell: "++a))
 
 getMessage :: Ciel JSValue
 getMessage =
@@ -224,7 +241,7 @@ getMessage =
      liftIO $ threadWaitRead (csIn cs)
 
      buf <- len `seq` liftM fst $ liftIO $ fdRead (csIn cs) (fromIntegral len)
-     liftIO $ putStrLn buf
+--     liftIO $ putStrLn buf
      case runGetJSON readJSValue (buf) of
        Right a -> return a
        Left err -> error err
@@ -285,26 +302,34 @@ getRandomWFName =
   do val <- getStdRandom (random) :: IO Integer
      return $ "cielhs-"++show val
 
-spawn :: (Typeable a,IResource a,JSON a) => Closure (CielWF a) -> Ciel (Ref a)
-spawn fn =
+spawn :: (Typeable a,IResource a,JSON a) => Closure (CielWF a) -> CielWF (Ref a)
+spawn = doCiel . spawn'
+
+spawn' :: (Typeable a,IResource a,JSON a) => Closure (CielWF a) -> Ciel (Ref a)
+spawn' fn =
    do ts <- getCielState
       res <- cmdSpawn False False [] [JSString $ toJSString "___",
                  showJSON fn,
                  JSString $ toJSString $ fromJust $ csWFName ts] Nothing (fromJust $ csWFName ts)
       return $ refFromJS res
 
-resolveBlock :: [Ref a] -> Ciel ()
-resolveBlock refs = 
+resolveBlocking :: [Ref a] -> CielWF ()
+resolveBlocking = doCiel . resolveBlocking'
+
+resolveBlocking' :: [Ref a] -> Ciel ()
+resolveBlocking' refs = 
     do ts <- getCielState
        cmdSpawn True True (map showJSON refs) [] Nothing (fromJust $ csWFName ts)
        cmdExit True
-       msg <- trace "ASS" $ getMessage
-       trace "ASS2" (return())
+       msg <- getMessage
        case requirePayload msg "start_task" of
              _ -> return ()
 
+-- This is currently a no-op. What is SHOULD do is issue the below tailSpawn and cmdExit calls
+-- and then exit the workflow with an exception. The problem is how to resume the workflow
+-- at the following step, and thus avoid re-executing the exception throw every time
 resolve :: [Ref a] -> Ciel ()
-resolve refs = tailSpawn $ map showJSON refs
+resolve refs = return () -- tailSpawn (map showJSON refs) >> cmdExit False
 
 tailSpawn :: [JSValue] -> Ciel ()
 tailSpawn deps =
@@ -374,18 +399,6 @@ cmdCloseOutput idx size =
          maybeSize Nothing = []
          maybeSize (Just sz) = [("size",JSRational False (fromIntegral sz))]
 
-handleMessage :: JSValue -> Ciel (Maybe JSValue)
-handleMessage jv =
-  case jv of
-     JSArray [JSString cmd,task] 
-       | fromJSString cmd == "die" -> 
-           do say $ "Dying: " ++ (show $ (readJSON task::Result String))
-              return Nothing
-       | fromJSString cmd == "start_task" ->
-           do -- say $ "Starting task"
-              return $ Just task
-     _ -> error "Unknown command"
-
 archiveState :: IO BL.ByteString
 archiveState =
    do arch <- Zip.addFilesToArchive [Zip.OptRecursive] Zip.emptyArchive [path]
@@ -397,7 +410,7 @@ dearchiveState bs =
    Zip.extractFilesFromArchive [Zip.OptRecursive] archive
    where archive = Zip.toArchive bs
 
-workflowName = "CielHaskell" -- TOOD plus random key
+workflowName = "CielHaskell"
 
 invokeWF :: String -> Closure (CielWF a) -> Ciel ()
 invokeWF wfname (Closure cloname clopl) = 
@@ -407,10 +420,9 @@ invokeWF wfname (Closure cloname clopl) =
         Just userfun ->
             do mres <- liftIO newEmptyMVar
                pforkIO $! startWF wfname () [(wfname,\_ -> 
-                                  do step explodeDummy 
-                                     res <- unWF (userfun clopl)
-                                     res `seq` step $! liftIO $! putMVar mres (Right res)
-                                     return ())] `pcatch`  (\(ReferenceUnavailableException r) -> liftIO $ putMVar mres (Left r)) `pcatch` (\NonTermination -> liftIO $ putMVar mres (Left JSNull)) `pcatch` otherException
+                                  do res <- unWF (userfun clopl)
+                                     res `seq` unsafeIOtoWF $! putMVar mres (Right res)
+                                     return ())] `pcatch`  (\(ReferenceUnavailableException r) -> liftIO $ putMVar mres (Left r)) `pcatch` (\NonTermination -> liftIO( putMVar mres (Left JSNull))) `pcatch` otherException
                rres <- liftIO $! readMVar mres
                case rres of
                    Left JSNull -> return ()
@@ -452,7 +464,7 @@ cielInit rcmd userFun =
          pcatch body referenceHandler
     referenceHandler (ReferenceUnavailableException theref) =
       do tailSpawn [theref]
-         cmdExit True
+         cmdExit False
     catchTermination body = pcatch body (\NonTermination -> return ()) >> return ()
     executeTask (JSObject jsv) = do
            setBinaryName (get_field jsv "binary")
@@ -466,8 +478,11 @@ cielInit rcmd userFun =
                       referenceWrapper $ catchTermination $ 
                          do case get_field jsv "fn_ref" of
                                Just q -> case readJSON q of
-                                           Ok v -> do state <- readRef v
+                                           Ok v -> do state <- readRef' v
                                                       liftIO $ dearchiveState state
+
+                                                      qq <- liftIO $ getCurrentDirectory
+                                                      trace ("Restored and about to restart " ++ show theclo++" in "++qq) (return())
                                            Error err -> error err
                                Nothing -> return ()
                             invokeWF (fromJSString wfname) theclo
@@ -500,4 +515,14 @@ cielInit rcmd userFun =
              Nothing -> return ()
              Just jsv ->
                 do executeTask jsv
+                   -- actually, there is no loop
+    handleMessage jv =
+      case jv of
+         JSArray [JSString cmd,task] 
+           | fromJSString cmd == "die" -> 
+                 return Nothing
+           | fromJSString cmd == "start_task" ->
+                 return $ Just task
+         _  -> error "Unknown command"
+
 

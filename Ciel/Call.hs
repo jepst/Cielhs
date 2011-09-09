@@ -1,58 +1,19 @@
- {-# LANGUAGE TemplateHaskell,DeriveDataTypeable,GeneralizedNewtypeDeriving #-}
+ {-# LANGUAGE TemplateHaskell #-}
 
-module Ciel.Call where
+module Ciel.Call (registerCalls, putReg, getEntryByIdent,
+                  mkClosure, mkClosureRec, remotable) where
 
 import Language.Haskell.TH
 import Control.Monad (liftM)
 import Control.Monad.Trans (liftIO,MonadIO)
 import Data.Dynamic (Dynamic,toDyn,fromDynamic)
-import Data.Typeable (Typeable,Typeable1,typeOf,typeOf1,mkAppTy,mkTyCon)
 import qualified Data.Map as Map (insert,lookup,Map,empty)
-import Control.Workflow (Workflow)
-import System.IO (Handle)
 import Data.ByteString.Lazy (ByteString)
-import Text.JSON 
-import System.Posix.Types (Fd)
-
-newtype CielWF a = CielWF (WF a) deriving (Typeable,Monad)
-
-type WF a = (Workflow Ciel a)
-
-
-
-data CielState = CielState { csIn :: Fd
-                           , csOut :: Handle 
-                           , csDummy :: Bool
-                           , csWFName :: Maybe String
-                           , csBinaryName :: Maybe String
-                           , csLookup :: Lookup
-                           , csClosure :: JSValue }
-
-data Ciel a = Ciel { runCiel :: CielState -> IO (CielState, a) }
-
-
-instance Monad Ciel where
-   m >>= k = Ciel $! \ts -> do
-                (ts',a) <- runCiel m ts
-                (ts'',a') <- runCiel (k a) (ts')
-                return (ts'',a')              
-   return x = Ciel $! \ts -> return $! (ts,x)
-
-instance MonadIO Ciel where
-    liftIO arg = Ciel $! \ts -> do
-                    v <- liftIO $! arg
-                    return (ts,v)
+import Ciel.Types
+import Text.JSON
+import Data.Typeable (typeOf,Typeable)
 
 -----------------------
-
-type RemoteCallMetaData = Lookup -> Lookup
-
-type Identifier = String
-
-data Entry = Entry {
-               entryName :: Identifier,
-               entryFunRef :: Dynamic
-             }
 
 registerCalls :: [RemoteCallMetaData] -> Lookup
 registerCalls [] = empty
@@ -62,8 +23,6 @@ registerCalls (h:rest) = let registered = registerCalls rest
 makeEntry :: (Typeable a) => Identifier -> a -> Entry
 makeEntry ident funref = Entry {entryName=ident, entryFunRef=toDyn funref}
 
-type IdentMap = Map.Map Identifier Entry
-data Lookup = Lookup { identMap :: IdentMap }
 
 putReg :: (Typeable a) => a -> Identifier -> Lookup -> Lookup
 putReg a i l = putEntry l a i
@@ -83,32 +42,6 @@ getEntryByIdent amap ident = (Map.lookup ident (identMap amap)) >>= (\x -> fromD
 empty :: Lookup
 empty = Lookup {identMap = Map.empty}
 
-data Payload = Payload
-                { 
-                  payloadType :: !String,
-                  payloadContent :: !String
-                } deriving (Typeable)
-
-instance JSON Payload where
-  showJSON pl = JSArray [showJSON $ payloadType pl,showJSON $ payloadContent pl]
-  readJSON (JSArray [pt,pv]) = Ok $ Payload {payloadType=fromOk $ readJSON pt,payloadContent=fromOk $ readJSON pv}
-  readJSON _ = error "blah blah"
-
-
-data Closure a = Closure String Payload
-     deriving (Typeable)
-
-instance Show (Closure a) where
-     show a = case a of
-                (Closure fn pl) -> show fn
-
-instance JSON (Closure a) where
-   showJSON (Closure s p) = JSArray [showJSON s,showJSON p]
-   readJSON (JSArray [s,p]) = Ok $ Closure (fromOk $ readJSON s) (fromOk $ readJSON p)
-   readJSON _ = error "Not an object even"   
-
-fromOk (Ok n) = n
-fromOk (Error n) = error n
 
 plencode :: (JSON a,Typeable a) => a -> Payload
 plencode a = let encoding = encode a

@@ -3,6 +3,8 @@ module TestAux where
 
 import Ciel
 
+-- import Debug.Trace (trace)
+
 sumup :: [Int] -> CielWF Int
 sumup is = return $ sum is
 
