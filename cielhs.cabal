@@ -12,7 +12,7 @@ Build-Type:          Simple
 tested-with:         GHC ==6.12.1
 
 library
-  Build-Depends:       base >= 4, filepath, bytestring, template-haskell, stm, utf8-string, directory, Workflow, RefSerialize, json, TCache == 0.6.5, unix, containers, mtl, zip-archive, ghc-binary, random
+  Build-Depends:       base >= 4, filepath, bytestring, template-haskell, stm, utf8-string, directory, Workflow, RefSerialize, json, TCache == 0.6.5, unix, containers, mtl, zip-archive, ghc-binary, random, temporary
   ghc-options:         -Wall
   Extensions:          TemplateHaskell
   Exposed-Modules:     Ciel

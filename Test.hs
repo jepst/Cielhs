@@ -10,9 +10,9 @@ import TestAux
 -- Uses Workflow-based continuations. When an unresolved
 -- reference is encountered, the job will suspend until
 -- it is restarted by the master.
-cielTest3 :: CielWF String
-cielTest3 = 
-   do doIO $ putStrLn "Starting test"
+cielTest3 :: JSValue -> CielWF String
+cielTest3 arg = 
+   do doIO $ putStrLn $ "Starting test "
       r1 <- mapM (\x -> spawn (add5__closure x)) [1..50]
       v1 <- mapM readRef r1
       r2 <- mapM (\x -> spawn (add1__closure x)) v1
@@ -25,9 +25,9 @@ cielTest3 =
 -- resolveBlock will block (and not tail recurse) until
 -- desired refs are available.
 -- Alternatively, use readRefBlock for same effect.
-cielTest2 :: CielWF String
-cielTest2 = 
-   do doIO $ putStrLn "Starting test"
+cielTest2 :: JSValue -> CielWF String
+cielTest2 arg = 
+   do doIO $ putStrLn $ "Starting test "
       r1 <- mapM (\x -> spawn (add5__closure x)) [1..50]
       resolveBlocking r1
       v1 <- mapM readRef r1

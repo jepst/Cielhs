@@ -10,12 +10,30 @@ module Ciel (CielWF, Ref,
              registerType,
 
              remotable, mkClosure, mkClosureRec) where
--- args, autolifting, resolve
+
+{-
+
+This version requires a hacked up RefSerialize; TCache
+version 0.6.5 (Workflow won't with with later versions); and
+the HaskellExecutor on CIEL.
+
+To do: general clean-up, better error handling
+       spawning without explicit closures: this is probably
+          possible by "forking" the current workflow
+       similarly, the resolve function should be able to
+          halt the program until its deps are met, but
+          this requires the ability to distinguish the
+          "first run" from "restart." I think it is possible
+          to query Workflow for the current step number,
+          and include that in the args of the tailspawn
+-}
+
 import Control.Exception (Exception,throw,catch,bracket,NonTermination(..),finally,SomeException)
 import Prelude hiding (catch)
 import Control.Monad (when,liftM)
 import Control.Monad.Trans (liftIO,MonadIO)
 import Data.Typeable (Typeable,typeOf)
+import System.IO.Temp (withTempDirectory)
 import Control.Workflow (registerType,Workflow,step,startWF,plift,defPath,getWFHistory,unsafeIOtoWF)
 import Data.TCache.IResource (IResource(..))
 import Data.RefSerialize (Serialize(..))
@@ -75,7 +93,7 @@ setWFName newname =
 setClosure :: JSValue -> Ciel ()
 setClosure newname = 
    do ts <- getCielState
-      putCielState ts {csClosure=newname}
+      putCielState ts {csClosure=Just newname}
 
 setBinaryName :: Maybe JSValue -> Ciel ()
 setBinaryName bin =
@@ -336,7 +354,7 @@ tailSpawn deps =
   do state <- liftIO archiveState
      ts <- getCielState
      cmdSpawn True False deps 
-           [JSString $ toJSString "___",csClosure ts,
+           [JSString $ toJSString "___",fromJust $ csClosure ts,
              JSString $ toJSString $ fromJust $ csWFName ts] 
            (Just state) (fromJust $ csWFName ts)
      return ()
@@ -434,21 +452,18 @@ invokeWF wfname (Closure cloname clopl) =
                     liftIO $ putStrLn $ "Exception in "++d
                     throw (n::SomeException)
 
-cielInit :: (Typeable a,IResource a,JSON a) => [RemoteCallMetaData] -> Closure (CielWF a) -> IO ()
+cielInit :: (Typeable a,IResource a,JSON a) => [RemoteCallMetaData] -> (JSValue -> Closure (CielWF a)) -> IO ()
 cielInit rcmd userFun = 
   do diInit
-     locInit
      args <- getArgs
      case args of
-       ["--write-fifo",wf,"--read-fifo",rf] -> gofifo rf wf
-       ["--read-fifo",rf,"--write-fifo",wf] -> gofifo rf wf
+       ["--write-fifo",wf,"--read-fifo",rf] -> inTemp $ gofifo rf wf
+       ["--read-fifo",rf,"--write-fifo",wf] -> inTemp $ gofifo rf wf
        _ -> error "Ciel wrapper can't parse arguments"
    where
+    inTemp body = withTempDirectory "." "cielhs-tmp-" $
+                       (\fp -> setCurrentDirectory fp >> body)
     table = registerCalls rcmd
-    locInit =
-       do dirname <- getRandomWFName 
-          createDirectory dirname
-          setCurrentDirectory dirname
     diInit =
        do registerType :: IO () -- TODO register other types
           registerType :: IO String
@@ -488,8 +503,10 @@ cielInit rcmd userFun =
                             invokeWF (fromJSString wfname) theclo
                             cmdExit False
               _ -> do setWFName workflowName
+                      let invoking = userFun (getCielArgs jsv)
+                      setClosure $ showJSON invoking
                       referenceWrapper $  catchTermination $
-                           do res <- invokeWF workflowName userFun
+                           do res <- invokeWF workflowName invoking
                               cmdExit False
                               return res
     executeTask _ = error "Unexpected task type"   
@@ -506,7 +523,7 @@ cielInit rcmd userFun =
                                           csDummy=False,csWFName=Nothing,
                                           csBinaryName=Nothing,
                                           csLookup=table,
-                                          csClosure=showJSON userFun}
+                                          csClosure=Nothing}
            return ()
     messageLoop =
       do msg <- getMessage

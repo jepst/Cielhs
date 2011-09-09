@@ -23,7 +23,7 @@ data CielState = CielState { csIn :: Fd
                            , csWFName :: Maybe String
                            , csBinaryName :: Maybe String
                            , csLookup :: Lookup
-                           , csClosure :: JSValue }
+                           , csClosure :: Maybe JSValue }
 
 data Ciel a = Ciel { runCiel :: CielState -> IO (CielState, a) }
 
